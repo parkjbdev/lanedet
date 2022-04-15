@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch import Tensor
-from torchvision.models.utils import load_state_dict_from_url
+from torch.hub import load_state_dict_from_url
 from typing import Callable, Any, Optional, List
 
 from lanedet.models.registry import BACKBONES
@@ -128,7 +128,7 @@ class MobileNetV2(nn.Module):
             norm_layer = nn.BatchNorm2d
 
         input_channel = 32
-        last_channel = 1280 
+        last_channel = 1280
 
         if inverted_residual_setting is None:
             inverted_residual_setting = [
@@ -184,7 +184,7 @@ class MobileNetV2(nn.Module):
 
 @BACKBONES.register_module
 class MobileNet(nn.Module):
-    def __init__(self, 
+    def __init__(self,
                 net = 'MobileNetV2',
                 pretrained=True,
                 out_conv=False,
