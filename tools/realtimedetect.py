@@ -5,41 +5,63 @@ import argparse
 from lanedet.datasets.process import Process
 from lanedet.models.registry import build_net
 from lanedet.utils.config import Config
-from lanedet.utils.visualization import imshow_lanes
+from lanedet.utils.visualization import imshow_lanes as drawLanes
 from lanedet.utils.net_utils import load_network
+from tools import draw
 
-class Detect(object):
+class ObjectDetection(object):
+    def __init__(self):
+        self.model = torch.hub.load("ultralytics/yolov5", "yolov5x6", pretrained=True)
+        self.object_of_interest = np.array(
+            [0, 1, 2, 3, 5, 7, 9, 10, 11, 12], dtype=np.uint8
+        )
+
+    def getObjects(self, frame):
+        result = self.model(frame)
+        objects = result.pandas().xyxy[0].iloc
+        return objects
+
+    def draw(self, frame, objects):
+        for obj in objects:
+            name, confidence = obj["name"], obj.confidence
+            xmin, xmax = int(obj.xmin), int(obj.xmax)
+            ymin, ymax = int(obj.ymin), int(obj.ymax)
+            if not obj["class"] in self.object_of_interest:
+                continue
+
+            draw.boundingBox(frame, xmin, ymin, xmax, ymax, name, confidence)
+
+
+class LaneDetection(object):
     def __init__(self, cfg):
         self.cfg = cfg
         self.processes = Process(cfg.val_process, cfg)
         self.net = build_net(self.cfg)
-        self.net = torch.nn.parallel.DataParallel(self.net, device_ids = range(1)).cuda()
+        self.net = torch.nn.parallel.DataParallel(self.net, device_ids=range(1)).cuda()
         self.net.eval()
         load_network(self.net, self.cfg.load_from)
 
     def preprocess(self, ori_img):
-        img = ori_img[self.cfg.cut_height:, :, :].astype(np.float32)
-        data = {'img': img, 'lanes': []}
+        img = ori_img[self.cfg.cut_height :, :, :].astype(np.float32)
+        data = {"img": img, "lanes": []}
         data = self.processes(data)
-        data['img'] = data['img'].unsqueeze(0)
-        data.update({'ori_img':ori_img})
+        data["img"] = data["img"].unsqueeze(0)
         return data
 
     def inference(self, data):
         with torch.no_grad():
             data = self.net(data)
             data = self.net.module.get_lanes(data)
-        return data
+            lanes = [lane.to_array(self.cfg) for lane in data[0]]
 
-    def show(self, data):
-        lanes = [lane.to_array(self.cfg) for lane in data['lanes']]
-        imshow_lanes(data['ori_img'], lanes, show=True)
+        return lanes
 
-    def run(self, data):
-        data = self.preprocess(data)
-        data['lanes'] = self.inference(data)[0]
-        self.show(data)
-        return data
+    def draw(self, frame, lanes):
+        drawLanes(frame, lanes)
+
+    def getLanes(self, frame):
+        data = self.preprocess(frame)
+        return self.inference(data)
 
 
 parser = argparse.ArgumentParser()
@@ -56,16 +78,27 @@ cap.set(cv2.CAP_PROP_POS_MSEC, args.start_from * 1000)
 
 print(f"{WIDTH}x{HEIGHT} starting from {args.start_from} second")
 
-# Configs
+# LaneDetection Configs
 cfg = Config.fromfile(args.config)
 cfg.load_from = args.load_from
+laneDetection = LaneDetection(cfg)
 
-detect = Detect(cfg)
+# Yolov5 Configs
+yolo = ObjectDetection()
 
 while True:
     ret, frame = cap.read()
-    data = detect.run(frame)
+
+    objects = yolo.getObjects(frame)
+    yolo.draw(frame, objects)
+
+    lanes = laneDetection.getLanes(frame)
+    laneDetection.draw(frame, lanes)
+
+    draw.fpsmeter(frame)
+    cv2.imshow("frame", frame)
 
     cv2.waitKey(1)
 
+cv2.destroyAllWindows()
 cap.release()
